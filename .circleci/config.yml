@@ -1,26 +1,74 @@
-# Use the latest 2.1 version of CircleCI pipeline process engine.
-# See: https://circleci.com/docs/2.0/configuration-reference
 version: 2.1
-
-# Define a job to be invoked later in a workflow.
-# See: https://circleci.com/docs/2.0/configuration-reference/#jobs
+orbs:
+    snyk: snyk/snyk@0.0.8
 jobs:
-  say-hello:
-    # Specify the execution environment. You can specify an image from Dockerhub or use one of our Convenience Images from CircleCI's Developer Hub.
-    # See: https://circleci.com/docs/2.0/configuration-reference/#docker-machine-macos-windows-executor
-    docker:
-      - image: cimg/base:stable
-    # Add steps to the job
-    # See: https://circleci.com/docs/2.0/configuration-reference/#steps
-    steps:
-      - checkout
-      - run:
-          name: "Say hello"
-          command: "echo Hello, World!"
+    build-test-publish:
+        docker:
+            - image: circleci/node:latest
+        steps:
+            - checkout
+            - run: npm install semantic-release @semantic-release/exec pkg --save-dev
+            - run: npm install
+            - run: npm test
+            - snyk/scan:
+                fail-on-issues: true
+                monitor-on-build: true
+                token-variable: SNYK_TOKEN
+            - run: npx semantic-release
+    build-test:
+        docker:
+            - image: circleci/node:latest
+        steps:
+            - checkout
+            - run: npm install
+            - run: npm test
+            - snyk/scan:
+                fail-on-issues: true
+                monitor-on-build: false
+                token-variable: SNYK_TOKEN
+            - run: npx tsc
+    build-test-from-fork:
+        docker:
+            - image: circleci/node:latest
+        steps:
+            - checkout
+            - run: npm install
+            - run: npm test
+            - run: npx tsc
 
-# Invoke jobs via workflows
-# See: https://circleci.com/docs/2.0/configuration-reference/#workflows
 workflows:
-  say-hello-workflow:
-    jobs:
-      - say-hello
+    version: 2.1
+    nightly:
+        triggers:
+          - schedule:
+              cron: "0 0 * * *"
+              filters:
+                branches:
+                  only:
+                    - master
+        jobs:
+            - build-test-publish:
+                context: SNYK
+
+    build-test-publish:
+        jobs:
+            - build-test-publish:
+                context: SNYK
+                filters:
+                    branches:
+                        only:
+                            - master
+    build-test:
+        jobs:
+            - build-test:
+                context: SNYK
+                filters:
+                    branches:
+                        ignore:
+                        - master
+                        - /pull\/[0-9]+/
+            - build-test-from-fork:
+                filters:
+                    branches:
+                        only:
+                        - /pull\/[0-9]+/
